@@ -28,13 +28,13 @@ def main() -> int:
     tag_columns.extend(sorted(tags_found - set(tag_columns)))
 
     fieldnames = [
+        "select",
         "provider",
         "model_name",
         "model_version",
         "param_size",
         "size_gb",
         "context",
-        "input",
         *tag_columns,
         "link",
         "description",
@@ -67,10 +67,10 @@ def main() -> int:
                 size_gb_str = "" if size_gb is None else str(size_gb)
 
                 input_types = v.get("input", [])
-                if isinstance(input_types, list):
-                    input_str = ", ".join(input_types)
-                else:
-                    input_str = str(input_types)
+                # if isinstance(input_types, list):
+                #     input_str = ", ".join(input_types)
+                # else:
+                #     input_str = str(input_types)
 
                 tags = set(str(t).lower() for t in v.get("tags", []))
 
@@ -89,23 +89,30 @@ def main() -> int:
 
                 cloud_from_version = "cloud" in model_version.lower()
 
+                select_providers = ["Google", "IBM", "Meta", "Microsoft", "NVIDIA", "OpenAI"]
+
                 row = {
+                    "select": "select" if provider in select_providers else None,
                     "provider": provider,
                     "model_name": model_name,
                     "model_version": model_version,
                     "param_size": param_size,
                     "size_gb": size_gb_str,
                     "context": v.get("context_display", ""),
-                    "input": input_str,
+                    "vision": "vision" if "Image" in input_types else None,
                     "link": sheet_link,
                     "description": description,
                 }
 
                 for t in tag_columns:
+                    if t == "vision":
+                        continue
+
                     if t == "cloud":
                         present = cloud_from_version
                     else:
                         present = t in tags
+
                     row[t] = t if present else None
 
                 w.writerow(row)

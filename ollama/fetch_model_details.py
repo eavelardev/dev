@@ -7,10 +7,11 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+import html as html_lib
 
 # Reuse provider inference + text cleanup
 from ollama_models import get_model_urls
-from providers import infer_provider, _clean_text
+from providers import infer_provider
 
 
 KNOWN_TAGS = ["cloud", "embedding", "thinking", "tools", "vision"]
@@ -31,6 +32,12 @@ VERSION_ROW_RE = re.compile(
 )
 
 PARAM_SIZE_RE = re.compile(r"(e?\d+(?:\.\d+)?[bm]|\d+x\d+b)", re.IGNORECASE)
+
+def _clean_text(text: str) -> str:
+    text = html_lib.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
 
 def _fetch(url: str, timeout_s: float = 25.0) -> str:
     req = urllib.request.Request(
@@ -170,7 +177,7 @@ def main() -> int:
         versions = extract_versions_from_page(page_html, page_tags)
         total_versions += len(versions)
 
-        provider = infer_provider(model_name, description, page_html)
+        provider = infer_provider(model_name)
 
         models.append(
             {
