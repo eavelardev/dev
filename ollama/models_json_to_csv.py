@@ -33,6 +33,7 @@ def main() -> int:
         "provider",
         "model_name",
         "model_version",
+        "version_aliases",
         "param_size",
         "size_gb",
         "context",
@@ -59,32 +60,46 @@ def main() -> int:
             model_name = str(m.get("model_name", "") or "").strip()
             description = str(m.get("description", "") or "").strip()
 
-            for v in sorted(
+            versions = sorted(
                 m.get("versions", []),
                 key=lambda v: str(v.get("model_version", "") or "").strip().lower(),
-            ):
-                url = v.get("version_link", "")
+            )
+
+            grouped: dict[str, list[dict]] = {}
+            for v in versions:
+                model_version_full = str(v.get("model_version", "") or "").strip()
+                hash_value = str(v.get("hash", "") or "").strip()
+                group_key = hash_value or f"nohash:{model_version_full}"
+                grouped.setdefault(group_key, []).append(v)
+
+            for group_versions in grouped.values():
+                names = [str(v.get("model_version", "") or "").strip() for v in group_versions]
+                names_sorted = sorted(
+                    names,
+                    key=lambda n: (len(n), n.lower()),
+                )
+                chosen_full = names_sorted[0] if names_sorted else ""
+                aliases = [n for n in names_sorted[1:] if n]
+                alias_versions = [a.split(":", 1)[1].strip() if ":" in a else a for a in aliases]
+
+                chosen = next((v for v in group_versions if str(v.get("model_version", "") or "").strip() == chosen_full), group_versions[0])
+
+                url = chosen.get("version_link", "")
                 sheet_link = f'=HYPERLINK("{url}", "link")' if url else ""
 
-                size_gb = v.get("size_gb", None)
+                size_gb = chosen.get("size_gb", None)
                 size_gb = None if size_gb is None else round(size_gb, 2)
 
-                input_types = v.get("input", [])
+                input_types = chosen.get("input", [])
+                tags = set(str(t).lower() for t in chosen.get("tags", []))
 
-                tags = set(str(t).lower() for t in v.get("tags", []))
+                param_size = str(chosen.get("param_size", "") or "").strip().lower()
 
-                model_version_full = str(v.get("model_version", "") or "").strip()
-                param_size = str(v.get("param_size", "") or "").strip().lower()
-
-                if ":" in model_version_full:
-                    model_version = model_version_full.split(":", 1)[1].strip()
+                if ":" in chosen_full:
+                    model_version = chosen_full.split(":", 1)[1].strip()
                 else:
                     model_version = ""
 
-                if model_version.strip().lower() == "latest":
-                    continue
-
-                cloud_from_version = "cloud" in model_version.lower()
                 select_providers = ["Google", "IBM", "Meta", "Microsoft", "NVIDIA", "OpenAI", "Mistral", "Moonshot AI"]
 
                 row = {
@@ -93,9 +108,10 @@ def main() -> int:
                     "provider": provider,
                     "model_name": model_name,
                     "model_version": model_version,
+                    "version_aliases": ", ".join(alias_versions),
                     "param_size": param_size,
                     "size_gb": size_gb,
-                    "context": v.get("context_display", ""),
+                    "context": chosen.get("context_display", ""),
                     "vision": "vision" if "Image" in input_types else None,
                     "RAG": "RAG" if "RAG" in description else None,
                     "link": sheet_link,
@@ -106,12 +122,7 @@ def main() -> int:
                     if t == "vision":
                         continue
 
-                    if t == "cloud":
-                        present = cloud_from_version
-                    else:
-                        present = t in tags
-
-                    row[t] = t if present else None
+                    row[t] = t if t in tags else None
 
                 w.writerow(row)
                 model_idx += 1

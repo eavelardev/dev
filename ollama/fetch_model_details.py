@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import re
-import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,16 +21,32 @@ MODEL_DESC_RE = re.compile(r'<meta\s+name="description"\s+content="([^"]*)"\s*/?
 
 # Parse the desktop table rows (more structured than the mobile rows).
 VERSION_ROW_RE = re.compile(
-    r'<div class="hidden group[^>]*sm:grid[^>]*>\s*'
+    r'<div class="grid grid-cols-12[^>]*>\s*'
     r'.*?<a href="(?P<href>/library/[^"]+)"[^>]*>(?P<name>[^<]+)</a>'
-    r'.*?<p class="col-span-2 text-neutral-500">(?P<size>[^<]+)</p>'
-    r'.*?<p class="col-span-2 text-neutral-500">(?P<context>[^<]+)</p>'
-    r'.*?<p class="col-span-2 text-neutral-500">\s*(?P<input>[^<]+?)\s*</p>'
+    r'.*?<p[^>]*text-neutral-500[^>]*>\s*(?P<size>[^<]+?)\s*</p>'
+    r'.*?<p[^>]*text-neutral-500[^>]*>\s*(?P<context>[^<]+?)\s*</p>'
+    r'.*?<div[^>]*text-neutral-500[^>]*>\s*(?P<input>.*?)\s*</div>'
+    r'.*?<span class="font-mono[^>]*>\s*(?P<hash>[^<]+?)\s*</span>\s*&nbsp;\s*·\s*&nbsp;\s*(?P<updated>[^<]+?)\s*<'
     r'.*?</div>',
     re.IGNORECASE | re.DOTALL,
 )
 
+ANCHOR_RE = re.compile(
+    r'<a[^>]+href="(?P<href>/library/[^"]+)"[^>]*>(?P<name>[^<]+)</a>',
+    re.IGNORECASE,
+)
+
+TEXT_NEUTRAL_RE = re.compile(
+    r'<p[^>]*class="[^"]*text-neutral-500[^"]*"[^>]*>\s*([^<]*)\s*</p>',
+    re.IGNORECASE,
+)
+
 PARAM_SIZE_RE = re.compile(r"(e?\d+(?:\.\d+)?[bm]|\d+x\d+b)", re.IGNORECASE)
+
+HASH_UPDATED_RE = re.compile(
+    r'<span class="font-mono[^>]*>\s*([^<]+?)\s*</span>\s*&nbsp;\s*·\s*&nbsp;\s*([^<]+?)\s*<',
+    re.IGNORECASE | re.DOTALL,
+)
 
 def _clean_text(text: str) -> str:
     text = html_lib.unescape(text)
@@ -52,9 +67,12 @@ def _fetch(url: str, timeout_s: float = 25.0) -> str:
         return resp.read().decode("utf-8", errors="ignore")
 
 
-def _cache_path(cache_dir: Path, model_name: str) -> Path:
+def _cache_path(cache_dir: Path, model_name: str, suffix: str = "") -> Path:
     safe = re.sub(r"[^a-zA-Z0-9._-]", "_", model_name)
-    return cache_dir / f"{safe}.html"
+    suffix = suffix.strip()
+    if suffix and not suffix.startswith("."):
+        suffix = f".{suffix}"
+    return cache_dir / f"{safe}{suffix}.html"
 
 
 def extract_tags_from_page(html: str) -> list[str]:
@@ -109,16 +127,106 @@ def extract_param_size_from_version(model_version: str) -> str:
     return m.group(1).lower()
 
 
-def extract_versions_from_page(html: str, page_tags: list[str]) -> list[dict]:
+def _strip_html(text: str) -> str:
+    return re.sub(r"<[^>]+>", " ", text)
+
+
+def _infer_version_tags(
+    model_name: str,
+    version_name: str,
+    input_types: list[str],
+    page_tags: list[str],
+    has_thinking_version: bool,
+    has_no_cloud: bool,
+) -> set[str]:
+    tags = set(page_tags)
+
+    lower_model = model_name.lower()
+    lower_version = version_name.lower()
+    lower_inputs = [t.lower() for t in input_types]
+
+    if "thinking" in tags:
+        if has_thinking_version and "think" not in lower_version:
+            tags.remove("thinking")
+        elif "instruct" in lower_version:
+            tags.remove("thinking")
+
+    if "cloud" in tags:
+        if has_no_cloud:
+            tags.add("cloud")
+        elif "cloud" not in lower_version:
+            tags.remove("cloud")
+
+    if "embed" in lower_model or "embedding" in lower_model or "embed" in lower_version:
+        tags.add("embedding")
+
+    if "thinking" in lower_model or "thinking" in lower_version:
+        tags.add("thinking")
+
+    if "tool" in lower_model or "tool" in lower_version or any("tool" in t for t in lower_inputs):
+        tags.add("tools")
+
+    if "vision" in lower_model or "vision" in lower_version or any("image" in t or "vision" in t for t in lower_inputs):
+        tags.add("vision")
+
+    if "instruct" in lower_version:
+        tags.add("instruct")
+
+    return tags
+
+
+def extract_versions_from_page(
+    html: str,
+    page_tags: list[str],
+    model_name: str | None = None,
+) -> list[dict]:
     versions: list[dict] = []
     seen: set[str] = set()
+    has_thinking_version = False
+    has_no_cloud = False
+
+    if "thinking" in page_tags:
+        name_matches = [
+            _clean_text(m.group("name"))
+            for m in VERSION_ROW_RE.finditer(html)
+        ]
+        if not name_matches:
+            name_matches = [
+                _clean_text(m.group("name"))
+                for m in ANCHOR_RE.finditer(html)
+            ]
+        has_thinking_version = any(
+            "think" in name.lower() for name in name_matches if name
+        )
+
+    if "cloud" in page_tags:
+        no_cloud_matches = [
+            _clean_text(m.group("name"))
+            for m in VERSION_ROW_RE.finditer(html)
+        ]
+        if not no_cloud_matches:
+            no_cloud_matches = [
+                _clean_text(m.group("name"))
+                for m in ANCHOR_RE.finditer(html)
+            ]
+        has_no_cloud = all(
+            "cloud" not in name.lower() for name in no_cloud_matches if name
+        )
 
     for m in VERSION_ROW_RE.finditer(html):
         href = m.group("href")
         name = _clean_text(m.group("name"))
+
+        if model_name:
+            expected_prefix = f"/library/{model_name}"
+            if not href.startswith(expected_prefix):
+                continue
+
         size_text = _clean_text(m.group("size"))
         context_text = _clean_text(m.group("context"))
-        input_text = _clean_text(m.group("input"))
+        input_text = _clean_text(_strip_html(m.group("input")))
+        hash_text = _clean_text(m.group("hash"))
+        updated_text = _clean_text(m.group("updated"))
 
         if name in seen:
             continue
@@ -126,10 +234,7 @@ def extract_versions_from_page(html: str, page_tags: list[str]) -> list[dict]:
 
         input_types = [p.strip() for p in input_text.split(",") if p.strip()]
 
-        # Version tags: inherit page tags + infer cloud from the version label.
-        version_tags = set(page_tags)
-        if ":" in name and "cloud" in name.split(":", 1)[1].lower():
-            version_tags.add("cloud")
+        version_tags = _infer_version_tags(model_name or "", name, input_types, page_tags, has_thinking_version, has_no_cloud)
 
         versions.append(
             {
@@ -137,12 +242,63 @@ def extract_versions_from_page(html: str, page_tags: list[str]) -> list[dict]:
                 "param_size": extract_param_size_from_version(name),
                 "version_href": href,
                 "version_link": f"https://ollama.com{href}",
-                "size_display": "" if size_text == "-" else size_text,
+                "size_display": size_text,
                 "size_gb": _parse_size(size_text),
                 "context_display": context_text,
                 "context_tokens": _parse_context_tokens(context_text),
                 "input": input_types,
                 "tags": sorted(version_tags),
+                "hash": hash_text,
+                "updated": updated_text,
+            }
+        )
+
+    if versions:
+        return versions
+
+    for m in ANCHOR_RE.finditer(html):
+        href = m.group("href")
+        name = _clean_text(m.group("name"))
+
+        if model_name:
+            expected_prefix = f"/library/{model_name}"
+            if not href.startswith(expected_prefix):
+                continue
+
+        window = html[m.start() : m.start() + 1600]
+        text_neutral = TEXT_NEUTRAL_RE.findall(window)
+        size_text = _clean_text(text_neutral[0]) if len(text_neutral) > 0 else ""
+        context_text = _clean_text(text_neutral[1]) if len(text_neutral) > 1 else ""
+        input_text = _clean_text(_strip_html(text_neutral[2])) if len(text_neutral) > 2 else ""
+        hash_text = ""
+        updated_text = ""
+        hash_match = HASH_UPDATED_RE.search(window)
+        if hash_match:
+            hash_text = _clean_text(hash_match.group(1))
+            updated_text = _clean_text(hash_match.group(2))
+
+        if name in seen:
+            continue
+        seen.add(name)
+
+        input_types = [p.strip() for p in input_text.split(",") if p.strip()]
+
+        version_tags = _infer_version_tags(model_name or "", name, input_types, page_tags, has_thinking_version)
+
+        versions.append(
+            {
+                "model_version": name,
+                "param_size": extract_param_size_from_version(name),
+                "version_href": href,
+                "version_link": f"https://ollama.com{href}",
+                "size_display": size_text,
+                "size_gb": _parse_size(size_text),
+                "context_display": context_text,
+                "context_tokens": _parse_context_tokens(context_text),
+                "input": input_types,
+                "tags": sorted(version_tags),
+                "hash": hash_text,
+                "updated": updated_text,
             }
         )
 
@@ -154,6 +310,7 @@ def main() -> int:
     out_json = here / "models_data.json"
     cache_dir = here / ".cache" / "ollama_library"
     cache_dir.mkdir(parents=True, exist_ok=True)
+
 
     models_url = get_model_urls()
 
@@ -170,11 +327,19 @@ def main() -> int:
             print(f"[{idx}/{len(models_url)}] fetch {url}")
             page_html = _fetch(url)
             cached.write_text(page_html, encoding="utf-8")
-            time.sleep(0.25)
+
+        tags_url = f"{url}/tags"
+        tags_cached = _cache_path(cache_dir, model_name, "tags")
+        if tags_cached.exists():
+            tags_html = tags_cached.read_text(encoding="utf-8", errors="ignore")
+        else:
+            print(f"[{idx}/{len(models_url)}] fetch {tags_url}")
+            tags_html = _fetch(tags_url)
+            tags_cached.write_text(tags_html, encoding="utf-8")
 
         description = extract_description_from_page(page_html)
         page_tags = extract_tags_from_page(page_html)
-        versions = extract_versions_from_page(page_html, page_tags)
+        versions = extract_versions_from_page(tags_html, page_tags, model_name=model_name)
         total_versions += len(versions)
 
         provider = infer_provider(model_name)
