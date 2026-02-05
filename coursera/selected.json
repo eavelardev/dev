@@ -54,6 +54,12 @@
         "type" : "Specialization"
     },
     {
+        "partner" : "Whizlabs",
+        "title" : "Exam Prep (NCA-GENL): NVIDIA-Certified Generative AI LLMs",
+        "level" : "Intermediate",
+        "type" : "Specialization"
+    },
+    {
         "partner" : "IBM",
         "title" : "IBM Deep Learning with PyTorch, Keras and Tensorflow",
         "level" : "Intermediate",

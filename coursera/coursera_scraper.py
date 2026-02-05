@@ -229,6 +229,8 @@ if __name__ == "__main__":
         "Meta",
         "Alberta Machine Intelligence Institute",
         "Anthropic",
+        "NVIDIA",
+        "Whizlabs"
     ]
 
     product_type_description = ["Professional Certificates", "Specializations"]

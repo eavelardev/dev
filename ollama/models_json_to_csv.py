@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 
-TAG_ORDER = ["cloud", "embedding", "thinking", "tools", "vision"]
+TAG_ORDER = ["cloud", "embedding", "vision", "tools", "thinking"]
 
 
 def main() -> int:
@@ -22,7 +22,7 @@ def main() -> int:
     for m in models:
         for v in m.get("versions", []):
             for t in v.get("tags", []):
-                tags_found.add(str(t).lower())
+                tags_found.add(str(t))
 
     tag_columns = [t for t in TAG_ORDER if t in tags_found]
     tag_columns.extend(sorted(tags_found - set(tag_columns)))
@@ -34,56 +34,53 @@ def main() -> int:
         "model_name",
         "model_version",
         "version_aliases",
+        "latest",
         "param_size",
         "size_gb",
         "context",
         *tag_columns,
+        "hybrid",
         "RAG",
         "link",
         "date",
         "description",
     ]
 
-    def _model_sort_key(m: dict) -> tuple:
-        provider_key = str(m.get("provider", "") or "").strip().lower()
-        name_key = str(m.get("model_name", "") or "").strip().lower()
-        return (provider_key, name_key)
-
-    sorted_models = sorted(models, key=_model_sort_key)
-
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         model_idx = 1
 
-        for m in sorted_models:
-            provider = str(m.get("provider", "") or "").strip()
-            model_name = str(m.get("model_name", "") or "").strip()
-            description = str(m.get("description", "") or "").strip()
+        for m in models:
+            provider = m["provider"]
+            model_name = m["model_name"]
+            description = m["description"]
+
+            model_has_think_and_instruct = (
+                any("thinking" in {t for t in v["tags"]} for v in m["versions"])
+                and any("instruct" in {t for t in v["tags"]} for v in m["versions"])
+            )
 
             versions = sorted(
-                m.get("versions", []),
-                key=lambda v: str(v.get("model_version", "") or "").strip().lower(),
+                m["versions"],
+                key=lambda v: v["model_version"],
             )
 
             grouped: dict[str, list[dict]] = {}
             for v in versions:
-                model_version_full = str(v.get("model_version", "") or "").strip()
-                hash_value = str(v.get("hash", "") or "").strip()
+                model_version_full = v["model_version"]
+                hash_value = v["hash"]
                 group_key = hash_value or f"nohash:{model_version_full}"
                 grouped.setdefault(group_key, []).append(v)
 
             for group_versions in grouped.values():
-                names = [str(v.get("model_version", "") or "").strip() for v in group_versions]
-                names_sorted = sorted(
-                    names,
-                    key=lambda n: (len(n), n.lower()),
-                )
+                names = [v["model_version"] for v in group_versions]
+                names_sorted = sorted(names, key=lambda n: (len(n), n))
                 chosen_full = names_sorted[0] if names_sorted else ""
                 aliases = [n for n in names_sorted[1:] if n]
-                alias_versions = [a.split(":", 1)[1].strip() if ":" in a else a for a in aliases]
+                alias_versions = [a.split(":", 1)[1] if ":" in a else a for a in aliases]
 
-                chosen = next((v for v in group_versions if str(v.get("model_version", "") or "").strip() == chosen_full), group_versions[0])
+                chosen = next((v for v in group_versions if v["model_version"] == chosen_full), group_versions[0])
 
                 url = chosen.get("version_link", "")
                 sheet_link = f'=HYPERLINK("{url}", "link")' if url else ""
@@ -91,13 +88,12 @@ def main() -> int:
                 size_gb = chosen.get("size_gb", None)
                 size_gb = None if size_gb is None else round(size_gb, 2)
 
-                input_types = chosen.get("input", [])
-                tags = set(str(t).lower() for t in chosen.get("tags", []))
+                tags = set(t for t in chosen.get("tags", []))
 
-                param_size = str(chosen.get("param_size", "") or "").strip().lower()
+                param_size = str(chosen.get("param_size", "") or "")
 
                 if ":" in chosen_full:
-                    model_version = chosen_full.split(":", 1)[1].strip()
+                    model_version = chosen_full.split(":", 1)[1]
                 else:
                     model_version = ""
 
@@ -110,10 +106,11 @@ def main() -> int:
                     "model_name": model_name,
                     "model_version": model_version,
                     "version_aliases": ", ".join(alias_versions),
+                    "latest": "latest" if model_version == "latest" or "latest" in alias_versions else None,
                     "param_size": param_size,
                     "size_gb": size_gb,
                     "context": chosen.get("context_display", ""),
-                    "vision": "vision" if "Image" in input_types else None,
+                    "hybrid": "hybrid" if model_has_think_and_instruct else None,
                     "RAG": "RAG" if "RAG" in description else None,
                     "link": sheet_link,
                     "date": chosen.get("updated", ""),
@@ -121,9 +118,6 @@ def main() -> int:
                 }
 
                 for t in tag_columns:
-                    if t == "vision":
-                        continue
-
                     row[t] = t if t in tags else None
 
                 w.writerow(row)

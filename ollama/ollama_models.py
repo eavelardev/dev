@@ -50,18 +50,18 @@ def extract_model_urls(html: str, base_url: str) -> list[str]:
     parser = LinkCollector()
     parser.feed(html)
 
-    model_urls: set[str] = set()
+    model_urls = []
     for href in parser.links:
         full_url = urljoin(base_url, href)
         parsed = urlparse(full_url)
         if parsed.path.startswith(MODEL_PATH_PREFIX):
-            model_urls.add(full_url)
+            model_urls.append(full_url)
 
-    return sorted(model_urls)
+    return model_urls
 
 
 def get_model_urls() -> list[str]:
-    all_urls: set[str] = set()
+    all_urls = []
     page = 1
 
     while True:
@@ -77,13 +77,13 @@ def get_model_urls() -> list[str]:
             break
 
         before_count = len(all_urls)
-        all_urls.update(page_urls)
+        all_urls.extend(page_urls)
         if len(all_urls) == before_count:
             break
 
         page += 1
 
-    return sorted(all_urls)
+    return all_urls
 
 if __name__ == "__main__":
     all_urls = get_model_urls()

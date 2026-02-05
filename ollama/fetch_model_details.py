@@ -140,8 +140,7 @@ def _infer_version_tags(
     has_no_cloud: bool,
 ) -> set[str]:
     tags = set(page_tags)
-
-    model_name = model_name.lower()
+    model_name_versions = model_name + " " + model_versions
     inputs = [t.lower() for t in input_types]
 
     if "thinking" in tags:
@@ -156,19 +155,19 @@ def _infer_version_tags(
         elif "cloud" not in model_versions:
             tags.remove("cloud")
 
-    if "embed" in model_name or "embedding" in model_name or "embed" in model_versions:
+    if "embed" in model_name_versions:
         tags.add("embedding")
 
-    if "thinking" in model_name or "thinking" in model_versions:
+    if "thinking" in model_name_versions or "reasoning" in model_name_versions:
         tags.add("thinking")
 
-    if "tool" in model_name or "tool" in model_versions or any("tool" in t for t in inputs):
+    if "tool" in model_name_versions:
         tags.add("tools")
 
-    if "vision" in model_name or "vision" in model_versions or any("image" in t or "vision" in t for t in inputs):
+    if "vision" in model_name_versions or "image" in inputs:
         tags.add("vision")
 
-    if "instruct" in model_versions:
+    if "instruct" in model_name_versions:
         tags.add("instruct")
 
     return tags

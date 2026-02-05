@@ -11,7 +11,10 @@ educators = [
     "Amazon Web Services",
     "Meta",
     "Alberta Machine Intelligence Institute",
-    "Anthropic"
+    "Anthropic",
+    "NVIDIA",
+    "Whizlabs"
+
 ]
 
 product_type_description = [
