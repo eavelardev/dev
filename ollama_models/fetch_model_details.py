@@ -127,6 +127,15 @@ def extract_param_size_from_version(model_version: str) -> str:
     return m.group(1).lower()
 
 
+def _strip_model_name_from_version(model_version: str, model_name: str | None) -> str:
+    if not model_name:
+        return model_version
+    prefix = f"{model_name}:"
+    if model_version.startswith(prefix):
+        return model_version[len(prefix):]
+    return model_version
+
+
 def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", " ", text)
 
@@ -235,10 +244,11 @@ def extract_versions_from_page(
         updated_text = _clean_text(m.group("updated"))
         input_types = [p.strip() for p in input_text.split(",") if p.strip()]
 
+        version_only = _strip_model_name_from_version(name, model_name)
         versions.append(
             {
-                "model_version": name,
-                "param_size": extract_param_size_from_version(name),
+                "model_version": version_only,
+                "param_size": extract_param_size_from_version(version_only),
                 "version_href": href,
                 "version_link": f"https://ollama.com{href}",
                 "size_display": size_text,
