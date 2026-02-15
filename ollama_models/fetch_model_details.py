@@ -293,7 +293,6 @@ def main() -> int:
     cache_dir = here / ".cache" / "ollama_library"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-
     models_url = get_model_urls()
 
     models: list[dict] = []
@@ -301,14 +300,6 @@ def main() -> int:
 
     for idx, url in enumerate(models_url, start=1):
         model_name = url.rsplit("/", 1)[-1]
-
-        cached = _cache_path(cache_dir, model_name)
-        if cached.exists():
-            page_html = cached.read_text(encoding="utf-8", errors="ignore")
-        else:
-            print(f"[{idx}/{len(models_url)}] fetch {url}")
-            page_html = _fetch(url)
-            cached.write_text(page_html, encoding="utf-8")
 
         tags_url = f"{url}/tags"
         tags_cached = _cache_path(cache_dir, model_name, "tags")
@@ -319,8 +310,8 @@ def main() -> int:
             tags_html = _fetch(tags_url)
             tags_cached.write_text(tags_html, encoding="utf-8")
 
-        description = extract_description_from_page(page_html)
-        page_tags = extract_tags_from_page(page_html)
+        description = extract_description_from_page(tags_html)
+        page_tags = extract_tags_from_page(tags_html)
         versions = extract_versions_from_page(tags_html, page_tags, model_name=model_name)
         total_versions += len(versions)
 
